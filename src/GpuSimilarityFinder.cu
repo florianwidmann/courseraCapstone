@@ -25,6 +25,35 @@ __constant__ float d_scalarBlue;
 __constant__ float d_scalarGreen;
 __constant__ float d_scalarRed;
 
+__device__ void loadBlockIntoSharedMemory(
+    const uint8_t* const image,
+    const unsigned int width,
+    const unsigned int tileSize,
+    const unsigned int numSlices,
+    const unsigned int blockIdxH,
+    const unsigned int blockIdxW,
+    uint8_t* const sharedData)
+{
+    const unsigned int tileFirstPixelIdxH = (blockIdxH * d_blockDim + threadIdx.x) * d_tileDim;
+    const unsigned int tileFirstPixelIdxW = (blockIdxW * d_blockDim + threadIdx.y) * d_tileDim;
+    const unsigned int tileFirstPixelIdx = tileFirstPixelIdxH * width + tileFirstPixelIdxW;
+
+    const unsigned int tileFirstPixelIdxShared = (threadIdx.x * d_blockDim + threadIdx.y) * tileSize;
+
+    for (unsigned int offset = threadIdx.z; offset < tileSize; offset += numSlices)
+    {
+        const unsigned int offsetH = offset / d_tileDim;
+        const unsigned int offsetW = offset % d_tileDim;
+
+        const unsigned int imageIdx = 3 * (tileFirstPixelIdx + offsetH * width + offsetW);
+        const unsigned int sharedIdx = 3 * (tileFirstPixelIdxShared + offset);
+
+        sharedData[sharedIdx] = image[imageIdx];
+        sharedData[sharedIdx + 1] = image[imageIdx + 1];
+        sharedData[sharedIdx + 2] = image[imageIdx + 2];
+    }
+}
+
 __global__ void kernelSimFinder(
     unsigned int* const references,
     float* const errors,
@@ -34,18 +63,26 @@ __global__ void kernelSimFinder(
     const unsigned int width,
     const unsigned int numTilesWidth)
 {
-    const unsigned int tileIdxH = blockIdx.x * d_blockDim + threadIdx.x;
-    const unsigned int tileIdxW = blockIdx.y * d_blockDim + threadIdx.y;
-    const unsigned int tileIdx = tileIdxH * numTilesWidth + tileIdxW;
+    const unsigned int tileSize = d_tileDim * d_tileDim;
+    const unsigned int numSlices = d_blockDim * d_blockDim;
+
+    extern __shared__ uint8_t blockData[];
+    uint8_t* const blockData1 = blockData;
+    uint8_t* const blockData2 = blockData + 3 * numSlices * tileSize;
+
+    loadBlockIntoSharedMemory(image, width, tileSize, numSlices, blockIdx.x, blockIdx.y, blockData1);
+
+    __syncthreads();
 
     const unsigned int sliceIdxH = threadIdx.z / d_blockDim;
     const unsigned int sliceIdxW = threadIdx.z % d_blockDim;
 
-    const unsigned int pixelIdxH = tileIdxH * d_tileDim;
-    const unsigned int pixelIdxW = tileIdxW * d_tileDim;
+    const unsigned int tileFirstPixelIdxShared = (threadIdx.x * d_blockDim + threadIdx.y) * tileSize;
+    const unsigned int refTileFirstPixelIdxShared = (sliceIdxH * d_blockDim + sliceIdxW) * tileSize;
 
-    const float scalarAvg = 1. / (d_tileDim * d_tileDim);
+    const unsigned int tileIdx = (blockIdx.x * d_blockDim + threadIdx.x) * numTilesWidth + (blockIdx.y * d_blockDim + threadIdx.y);
 
+    const float scalarAvg = 1. / tileSize;
     const float weightAvg = 0.5;
     float minError = 0;
     unsigned int bestRefTileIdx = tileIdx;
@@ -56,50 +93,47 @@ __global__ void kernelSimFinder(
         for (unsigned int offsetW = min(d_windowDim, blockIdx.y + 1); offsetW > 0; --offsetW)
         {
             const unsigned int refBlockIdxW = blockIdx.y + 1 - offsetW;
-            
+
+            loadBlockIntoSharedMemory(image, width, tileSize, numSlices, refBlockIdxH, refBlockIdxW, blockData2);
+
+            __syncthreads();
+
             if (refBlockIdxH == blockIdx.x && refBlockIdxW == blockIdx.y &&
                 (sliceIdxH > threadIdx.x || sliceIdxH == threadIdx.x && sliceIdxW >= threadIdx.y))
             {
                 continue;
             }
 
-            const unsigned int refTileIdxH = refBlockIdxH * d_blockDim + sliceIdxH;
-            const unsigned int refTileIdxW = refBlockIdxW * d_blockDim + sliceIdxW;
-            const unsigned int refPixelIdxH = refTileIdxH * d_tileDim;
-            const unsigned int refPixelIdxW = refTileIdxW * d_tileDim;
-
             float errorMax = 0;
             float errorAvg = 0;
-            for (unsigned int x = 0; x < d_tileDim; ++x)
+            for (unsigned int offset = 0; offset < tileSize; ++offset)
             {
-                for (unsigned int y = 0; y < d_tileDim; ++y)
-                {
-                    const unsigned int idx = 3 * ((pixelIdxH + x) * width + (pixelIdxW + y));
-                    const unsigned int refIdx = 3 * ((refPixelIdxH + x) * width + (refPixelIdxW + y));
+                const unsigned int idx = 3 * (tileFirstPixelIdxShared + offset);
+                const unsigned int refIdx = 3 * (refTileFirstPixelIdxShared + offset);
 
-                    // Relies on the fact that unsigned char is promoted to (signed) int before the subtractions.
-                    const int diffBlue = image[idx] - image[refIdx];
-                    const int diffGreen = image[idx + 1] - image[refIdx + 1];
-                    const int diffRed = image[idx + 2] - image[refIdx + 2];
+                // Relies on the fact that unsigned char is promoted to (signed) int before the subtractions.
+                const int diffBlue = blockData1[idx] - blockData2[refIdx];
+                const int diffGreen = blockData1[idx + 1] - blockData2[refIdx + 1];
+                const int diffRed = blockData1[idx + 2] - blockData2[refIdx + 2];
 
-                    const float pixelError = d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
+                const float pixelError = d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
 
-                    errorAvg += pixelError;
-                    errorMax = max(errorMax, pixelError);
-                }
+                errorAvg += pixelError;
+                errorMax = max(errorMax, pixelError);
             }
             errorAvg *= scalarAvg;
             const float error = weightAvg * errorAvg + (1. - weightAvg) * errorMax;
 
             if (error <= d_epsilonHigh && (bestRefTileIdx == tileIdx || minError > d_epsilonLow && error < minError))
             {
+                const unsigned int refTileIdx = (refBlockIdxH * d_blockDim + sliceIdxH) * numTilesWidth + (refBlockIdxW * d_blockDim + sliceIdxW);
+
                 minError = error;
-                bestRefTileIdx = refTileIdxH * numTilesWidth + refTileIdxW;
+                bestRefTileIdx = refTileIdx;
             }
         }
     }
 
-    const unsigned int numSlices = d_blockDim * d_blockDim;
     const unsigned int resIdx = tileIdx * numSlices + threadIdx.z;
     referencesSliced[resIdx] = bestRefTileIdx;
     errorsSliced[resIdx] = minError;
@@ -192,9 +226,11 @@ std::tuple<std::vector<unsigned int>, std::vector<float>, unsigned int> findSimi
     cudaCheck(cudaEventCreate(&timerEnd));
     cudaCheck(cudaEventRecord(timerStart));
 
+    const unsigned int blockDataSize = 3 * blockDim * blockDim * tileDim * tileDim;
+    const unsigned int sharedMemSize = 2 * blockDataSize;
     const dim3 blocksPerGrid(numBlocksHeight, numBlocksWidth);
     const dim3 threadsPerBlock(blockDim, blockDim, numSlices);
-    kernelSimFinder<<<blocksPerGrid, threadsPerBlock>>>(
+    kernelSimFinder<<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(
         d_references, d_errors, d_image, d_referencesSliced, d_errorsSliced, paddedWidth, numTilesWidth);
 
     cudaCheck(cudaEventRecord(timerEnd));
