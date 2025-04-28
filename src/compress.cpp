@@ -87,7 +87,7 @@ int main(int argc, char *argv[])
         {
             try
             {
-                std::cout << "\nprocessing file " << inputFile << "...";
+                std::cout << "\nprocessing file " << inputFile << "...\n";
 
                 const auto [format, paddedImage, origHeight, origWidth, paddedHeight, paddedWidth] =
                     ImageIO::loadPaddedImage(inputFile, [&](const unsigned int heightOrWidth) { return finder.getPaddedSize(heightOrWidth); });
@@ -100,8 +100,6 @@ int main(int argc, char *argv[])
 
                 const std::string outputFile = getOutputFileName(inputFile);
                 ImageIO::saveImage(outputFile, outputImage, origHeight, origWidth, origWidth, format);
-
-                std::cout << " done" << std::endl;
 
                 size_t numRefTiles = 0;
                 float maxError = 0;
@@ -118,7 +116,7 @@ int main(int argc, char *argv[])
                 const float percentage = static_cast<float>(numRefTiles) / refs.size() * 100.;
                 avgError = numRefTiles == 0 ? 0 : avgError / numRefTiles;
 
-                std::cout << "total number of tiles: " << refs.size() << "\n";
+                std::cout << "\ntotal number of tiles: " << refs.size() << "\n";
                 std::cout << "number of reference tiles: " << numRefTiles << " (" << percentage << "%)\n";
                 std::cout << "max error: " << maxError << "\n";
                 std::cout << "average error (only considering reference tiles): " << avgError << "\n";

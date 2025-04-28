@@ -1,3 +1,4 @@
+#include <iostream>
 #include <stdexcept>
 
 #include <cuda_runtime.h>
@@ -185,13 +186,28 @@ std::tuple<std::vector<unsigned int>, std::vector<float>, unsigned int> findSimi
     float* d_errorsSliced;
     cudaCheck(cudaMalloc(&d_errorsSliced, numSlicedResElements * sizeof(float)));
 
+    cudaEvent_t timerStart;
+    cudaCheck(cudaEventCreate(&timerStart));
+    cudaEvent_t timerEnd;
+    cudaCheck(cudaEventCreate(&timerEnd));
+    cudaCheck(cudaEventRecord(timerStart));
+
     const dim3 blocksPerGrid(numBlocksHeight, numBlocksWidth);
     const dim3 threadsPerBlock(blockDim, blockDim, numSlices);
     kernelSimFinder<<<blocksPerGrid, threadsPerBlock>>>(
         d_references, d_errors, d_image, d_referencesSliced, d_errorsSliced, paddedWidth, numTilesWidth);
 
+    cudaCheck(cudaEventRecord(timerEnd));
+    cudaCheck(cudaEventSynchronize(timerEnd));
+    float kernelTimMs;
+    cudaCheck(cudaEventElapsedTime(&kernelTimMs, timerStart, timerEnd));
+    std::cout << "\nCUDA kernel execution time: " << kernelTimMs << " ms" << std::endl;
+
     cudaCheck(cudaMemcpy(references.data(), d_references, numTiles * sizeof(unsigned int), cudaMemcpyDeviceToHost));
     cudaCheck(cudaMemcpy(errors.data(), d_errors, numTiles * sizeof(float), cudaMemcpyDeviceToHost));
+
+	cudaCheck(cudaEventDestroy(timerStart));
+    cudaCheck(cudaEventDestroy(timerEnd));
 
     cudaCheck(cudaFree(d_errorsSliced));
     cudaCheck(cudaFree(d_referencesSliced));
