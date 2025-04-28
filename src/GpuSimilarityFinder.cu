@@ -29,7 +29,6 @@ __device__ void loadBlockIntoSharedMemory(
     const uint8_t* const image,
     const unsigned int width,
     const unsigned int tileSize,
-    const unsigned int numSlices,
     const unsigned int blockIdxH,
     const unsigned int blockIdxW,
     uint8_t* const sharedData)
@@ -40,7 +39,7 @@ __device__ void loadBlockIntoSharedMemory(
 
     const unsigned int tileFirstPixelIdxShared = (threadIdx.x * d_blockDim + threadIdx.y) * tileSize;
 
-    for (unsigned int offset = threadIdx.z; offset < tileSize; offset += numSlices)
+    for (unsigned int offset = threadIdx.z; offset < tileSize; offset += blockDim.z)
     {
         const unsigned int offsetH = offset / d_tileDim;
         const unsigned int offsetW = offset % d_tileDim;
@@ -89,26 +88,30 @@ __global__ void kernelSimFinder(
     unsigned int* const references,
     float* const errors,
     const uint8_t* const image,
-    unsigned int* const referencesSliced,
-    float* const errorsSliced,
     const unsigned int width,
     const unsigned int numTilesWidth)
 {
     const unsigned int tileSize = d_tileDim * d_tileDim;
+    const unsigned int numTilesPerBlock = d_blockDim * d_blockDim;
     const unsigned int numSlices = d_blockDim * d_blockDim;
 
-    extern __shared__ uint8_t blockData[];
-    uint8_t* const blockData1 = blockData;
-    uint8_t* const blockData2 = blockData + 3 * numSlices * tileSize;
+    extern __shared__ float sharedData[];
+    float* const errorsSliced = sharedData;
+    static_assert(alignof(float) >= alignof(unsigned int));
+    unsigned int* const refsSliced = (unsigned int*) (errorsSliced + numTilesPerBlock * numSlices);
+    static_assert(alignof(unsigned int) >= alignof(uint8_t));
+    uint8_t* const blockData1 = (uint8_t*) (refsSliced + numTilesPerBlock * numSlices);
+    uint8_t* const blockData2 = blockData1 + 3 * numTilesPerBlock * tileSize;
 
-    loadBlockIntoSharedMemory(image, width, tileSize, numSlices, blockIdx.x, blockIdx.y, blockData1);
+    loadBlockIntoSharedMemory(image, width, tileSize, blockIdx.x, blockIdx.y, blockData1);
 
     __syncthreads();
 
     const unsigned int sliceIdxH = threadIdx.z / d_blockDim;
     const unsigned int sliceIdxW = threadIdx.z % d_blockDim;
 
-    const unsigned int tileFirstPixelIdxShared = (threadIdx.x * d_blockDim + threadIdx.y) * tileSize;
+    const unsigned int tileIdxBlock = threadIdx.x * d_blockDim + threadIdx.y;
+    const unsigned int tileFirstPixelIdxShared = tileIdxBlock * tileSize;
     const unsigned int refTileFirstPixelIdxShared = (sliceIdxH * d_blockDim + sliceIdxW) * tileSize;
 
     const unsigned int tileIdx = (blockIdx.x * d_blockDim + threadIdx.x) * numTilesWidth + (blockIdx.y * d_blockDim + threadIdx.y);
@@ -123,7 +126,7 @@ __global__ void kernelSimFinder(
         {
             const unsigned int refBlockIdxW = blockIdx.y + 1 - offsetW;
 
-            loadBlockIntoSharedMemory(image, width, tileSize, numSlices, refBlockIdxH, refBlockIdxW, blockData2);
+            loadBlockIntoSharedMemory(image, width, tileSize, refBlockIdxH, refBlockIdxW, blockData2);
 
             __syncthreads();
 
@@ -145,8 +148,8 @@ __global__ void kernelSimFinder(
         }
     }
 
-    const unsigned int resIdx = tileIdx * numSlices + threadIdx.z;
-    referencesSliced[resIdx] = bestRefTileIdx;
+    const unsigned int resIdx = tileIdxBlock * numSlices + threadIdx.z;
+    refsSliced[resIdx] = bestRefTileIdx;
     errorsSliced[resIdx] = minError;
 
     __syncthreads();
@@ -155,7 +158,7 @@ __global__ void kernelSimFinder(
     {
         for (size_t i = 1; i < numSlices; ++i)
         {
-            const unsigned int refTileIdx = referencesSliced[resIdx + i];
+            const unsigned int refTileIdx = refsSliced[resIdx + i];
             const float error = errorsSliced[resIdx + i];
             if (refTileIdx != tileIdx && error <= d_epsilonHigh &&
                 (bestRefTileIdx == tileIdx ||
@@ -208,41 +211,38 @@ std::tuple<std::vector<unsigned int>, std::vector<float>, unsigned int> findSimi
     const unsigned int numBlocksHeight = numTilesHeight / blockDim;
     const unsigned int numBlocksWidth = numTilesWidth / blockDim;
     
-    const unsigned int numTiles = numTilesHeight * numTilesWidth;
-    const unsigned int numSlices = blockDim * blockDim;
+    const unsigned int numTilesTotal = numTilesHeight * numTilesWidth;
 
     // Allocate memory here so that any failure doesn't affect the Cuda related cleanup.
-    std::vector<unsigned int> references(numTiles);
-    std::vector<float> errors(numTiles);
+    std::vector<unsigned int> references(numTilesTotal);
+    std::vector<float> errors(numTilesTotal);
 
     unsigned int* d_references;
-    cudaCheck(cudaMalloc(&d_references, numTiles * sizeof(unsigned int)));
+    cudaCheck(cudaMalloc(&d_references, numTilesTotal * sizeof(unsigned int)));
     float* d_errors;
-    cudaCheck(cudaMalloc(&d_errors, numTiles * sizeof(float)));
+    cudaCheck(cudaMalloc(&d_errors, numTilesTotal * sizeof(float)));
 
     const unsigned int imageSize = paddedWidth * paddedHeight * 3 * sizeof(uint8_t);
     uint8_t* d_image;
     cudaCheck(cudaMalloc(&d_image, imageSize));
     cudaCheck(cudaMemcpy(d_image, paddedImage, imageSize, cudaMemcpyHostToDevice));
    
-    const unsigned int numSlicedResElements = numTiles * numSlices;
-    unsigned int* d_referencesSliced;
-    cudaCheck(cudaMalloc(&d_referencesSliced, numSlicedResElements * sizeof(unsigned int)));
-    float* d_errorsSliced;
-    cudaCheck(cudaMalloc(&d_errorsSliced, numSlicedResElements * sizeof(float)));
-
     cudaEvent_t timerStart;
     cudaCheck(cudaEventCreate(&timerStart));
     cudaEvent_t timerEnd;
     cudaCheck(cudaEventCreate(&timerEnd));
     cudaCheck(cudaEventRecord(timerStart));
 
-    const unsigned int blockDataSize = 3 * blockDim * blockDim * tileDim * tileDim;
-    const unsigned int sharedMemSize = 2 * blockDataSize;
+    const unsigned int numTilesPerBlock = blockDim * blockDim;
+    const unsigned int numSlices = blockDim * blockDim;
+
+    const unsigned int blockDataSize = 3 * numTilesPerBlock * tileDim * tileDim * sizeof(uint8_t);
+    const unsigned int scaledRefsSize = numTilesPerBlock * numSlices * sizeof(unsigned int);
+    const unsigned int scaledErrorSize = numTilesPerBlock * numSlices * sizeof(float);
+    const unsigned int sharedMemSize = 2 * blockDataSize + scaledRefsSize + scaledErrorSize;
     const dim3 blocksPerGrid(numBlocksHeight, numBlocksWidth);
     const dim3 threadsPerBlock(blockDim, blockDim, numSlices);
-    kernelSimFinder<<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(
-        d_references, d_errors, d_image, d_referencesSliced, d_errorsSliced, paddedWidth, numTilesWidth);
+    kernelSimFinder<<<blocksPerGrid, threadsPerBlock, sharedMemSize>>>(d_references, d_errors, d_image, paddedWidth, numTilesWidth);
 
     cudaCheck(cudaEventRecord(timerEnd));
     cudaCheck(cudaEventSynchronize(timerEnd));
@@ -250,14 +250,12 @@ std::tuple<std::vector<unsigned int>, std::vector<float>, unsigned int> findSimi
     cudaCheck(cudaEventElapsedTime(&kernelTimMs, timerStart, timerEnd));
     std::cout << "\nCUDA kernel execution time: " << kernelTimMs << " ms" << std::endl;
 
-    cudaCheck(cudaMemcpy(references.data(), d_references, numTiles * sizeof(unsigned int), cudaMemcpyDeviceToHost));
-    cudaCheck(cudaMemcpy(errors.data(), d_errors, numTiles * sizeof(float), cudaMemcpyDeviceToHost));
+    cudaCheck(cudaMemcpy(references.data(), d_references, numTilesTotal * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+    cudaCheck(cudaMemcpy(errors.data(), d_errors, numTilesTotal * sizeof(float), cudaMemcpyDeviceToHost));
 
 	cudaCheck(cudaEventDestroy(timerStart));
     cudaCheck(cudaEventDestroy(timerEnd));
 
-    cudaCheck(cudaFree(d_errorsSliced));
-    cudaCheck(cudaFree(d_referencesSliced));
     cudaCheck(cudaFree(d_image));
     cudaCheck(cudaFree(d_errors));
     cudaCheck(cudaFree(d_references));
