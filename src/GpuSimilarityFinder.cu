@@ -43,6 +43,9 @@ __global__ void kernelSimFinder(
     const unsigned int pixelIdxH = tileIdxH * d_tileDim;
     const unsigned int pixelIdxW = tileIdxW * d_tileDim;
 
+    const float scalarAvg = 1. / (d_tileDim * d_tileDim);
+
+    const float weightAvg = 0.5;
     float minError = 0;
     unsigned int bestRefTileIdx = tileIdx;
 
@@ -64,7 +67,8 @@ __global__ void kernelSimFinder(
             const unsigned int refPixelIdxH = refTileIdxH * d_tileDim;
             const unsigned int refPixelIdxW = refTileIdxW * d_tileDim;
 
-            float error = 0;
+            float errorMax = 0;
+            float errorAvg = 0;
             for (unsigned int x = 0; x < d_tileDim; ++x)
             {
                 for (unsigned int y = 0; y < d_tileDim; ++y)
@@ -76,11 +80,15 @@ __global__ void kernelSimFinder(
                     const int diffBlue = image[idx] - image[refIdx];
                     const int diffGreen = image[idx + 1] - image[refIdx + 1];
                     const int diffRed = image[idx + 2] - image[refIdx + 2];
-                 
-                    error += d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
+
+                    const float pixelError = d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
+
+                    errorAvg += pixelError;
+                    errorMax = max(errorMax, pixelError);
                 }
             }
-            error /= 255. * 255. * (d_tileDim * d_tileDim);
+            errorAvg *= scalarAvg;
+            const float error = weightAvg * errorAvg + (1. - weightAvg) * errorMax;
 
             if (error <= d_epsilonHigh && (bestRefTileIdx == tileIdx || minError > d_epsilonLow && error < minError))
             {
