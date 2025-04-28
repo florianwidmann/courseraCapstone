@@ -54,6 +54,37 @@ __device__ void loadBlockIntoSharedMemory(
     }
 }
 
+__device__ float calcError(
+    const uint8_t* const blockData1,
+    const uint8_t* const blockData2,
+    const unsigned int tileSize,
+    const unsigned int tileFirstPixelIdxShared,
+    const unsigned int refTileFirstPixelIdxShared)
+{
+    constexpr float weightAvg = 0.5;
+
+    float errorMax = 0;
+    float errorAvg = 0;
+    for (unsigned int offset = 0; offset < tileSize; ++offset)
+    {
+        const unsigned int idx = 3 * (tileFirstPixelIdxShared + offset);
+        const unsigned int refIdx = 3 * (refTileFirstPixelIdxShared + offset);
+
+        // Relies on the fact that unsigned char is promoted to (signed) int before the subtractions.
+        const int diffBlue = blockData1[idx] - blockData2[refIdx];
+        const int diffGreen = blockData1[idx + 1] - blockData2[refIdx + 1];
+        const int diffRed = blockData1[idx + 2] - blockData2[refIdx + 2];
+
+        const float pixelError = d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
+
+        errorAvg += pixelError;
+        errorMax = max(errorMax, pixelError);
+    }
+    errorAvg /= tileSize;
+    
+    return weightAvg * errorAvg + (1. - weightAvg) * errorMax;
+}
+
 __global__ void kernelSimFinder(
     unsigned int* const references,
     float* const errors,
@@ -82,8 +113,6 @@ __global__ void kernelSimFinder(
 
     const unsigned int tileIdx = (blockIdx.x * d_blockDim + threadIdx.x) * numTilesWidth + (blockIdx.y * d_blockDim + threadIdx.y);
 
-    const float scalarAvg = 1. / tileSize;
-    const float weightAvg = 0.5;
     float minError = 0;
     unsigned int bestRefTileIdx = tileIdx;
 
@@ -104,25 +133,7 @@ __global__ void kernelSimFinder(
                 continue;
             }
 
-            float errorMax = 0;
-            float errorAvg = 0;
-            for (unsigned int offset = 0; offset < tileSize; ++offset)
-            {
-                const unsigned int idx = 3 * (tileFirstPixelIdxShared + offset);
-                const unsigned int refIdx = 3 * (refTileFirstPixelIdxShared + offset);
-
-                // Relies on the fact that unsigned char is promoted to (signed) int before the subtractions.
-                const int diffBlue = blockData1[idx] - blockData2[refIdx];
-                const int diffGreen = blockData1[idx + 1] - blockData2[refIdx + 1];
-                const int diffRed = blockData1[idx + 2] - blockData2[refIdx + 2];
-
-                const float pixelError = d_scalarBlue * (diffBlue * diffBlue) + d_scalarGreen * (diffGreen * diffGreen) + d_scalarRed * (diffRed * diffRed);
-
-                errorAvg += pixelError;
-                errorMax = max(errorMax, pixelError);
-            }
-            errorAvg *= scalarAvg;
-            const float error = weightAvg * errorAvg + (1. - weightAvg) * errorMax;
+            const float error = calcError(blockData1, blockData2, tileSize, tileFirstPixelIdxShared, refTileFirstPixelIdxShared);
 
             if (error <= d_epsilonHigh && (bestRefTileIdx == tileIdx || minError > d_epsilonLow && error < minError))
             {
