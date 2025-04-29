@@ -105,8 +105,6 @@ __global__ void kernelSimFinder(
 
     loadBlockIntoSharedMemory(image, width, tileSize, blockIdx.x, blockIdx.y, blockData1);
 
-    __syncthreads();
-
     const unsigned int sliceIdxH = threadIdx.z / d_blockDim;
     const unsigned int sliceIdxW = threadIdx.z % d_blockDim;
 
@@ -125,6 +123,8 @@ __global__ void kernelSimFinder(
         for (unsigned int offsetW = min(d_windowDim, blockIdx.y + 1); offsetW > 0; --offsetW)
         {
             const unsigned int refBlockIdxW = blockIdx.y + 1 - offsetW;
+
+            __syncthreads();
 
             loadBlockIntoSharedMemory(image, width, tileSize, refBlockIdxH, refBlockIdxW, blockData2);
 
