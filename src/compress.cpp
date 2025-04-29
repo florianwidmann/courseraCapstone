@@ -5,7 +5,7 @@
 
 namespace
 {
-    std::vector<uint8_t> createOutputImage(
+    std::vector<uint8_t> createDecompressedImage(
         const std::vector<uint8_t>& paddedImage,
         const unsigned int origHeight,
         const unsigned int origWidth,
@@ -62,6 +62,32 @@ namespace
         const std::string::size_type dotLoc = inputFile.rfind('.');
         return dotLoc == std::string::npos ? inputFile + preExtSuffix : inputFile.substr(0, dotLoc) + preExtSuffix + inputFile.substr(dotLoc);
     }
+
+    void printStats(
+        const std::vector<unsigned int>& refs,
+        const std::vector<float>& errors)
+    {
+        size_t numRefTiles = 0;
+        float maxError = 0;
+        float avgError = 0;
+        for (size_t i = 0; i < refs.size(); ++i)
+        {
+            if (refs[i] != i)
+            {
+                ++numRefTiles;
+                maxError = std::max(maxError, errors[i]);
+                avgError += errors[i];
+            }
+        }
+        const float percentage = static_cast<float>(numRefTiles) / refs.size() * 100.;
+        avgError = numRefTiles == 0 ? 0 : avgError / numRefTiles;
+
+        std::cout << "\ntotal number of tiles: " << refs.size() << "\n";
+        std::cout << "number of reference tiles: " << numRefTiles << " (" << percentage << "%)\n";
+        std::cout << "max error: " << maxError << "\n";
+        std::cout << "average error (only considering reference tiles): " << avgError << "\n";
+        std::cout << std::endl;
+    }
 } // anonymous namespace
 
 int main(int argc, char *argv[])
@@ -78,7 +104,6 @@ int main(int argc, char *argv[])
 
         SimilarityFinder& finder = SimilarityFinder::getInstance();
         finder.setOptions(options);
-        const unsigned int tileDim = options.getTileDim();
 
         for (const std::string& inputFile : inputFiles)
         {
@@ -93,31 +118,11 @@ int main(int argc, char *argv[])
                     finder.findSimilarities(origHeight, origWidth, paddedImage.data(), paddedHeight, paddedWidth);
 
                 std::vector<uint8_t> outputImage =
-                    createOutputImage(paddedImage, origHeight, origWidth, paddedWidth, refs, numTilesHeight, numTilesWidth, tileDim);
-
+                    createDecompressedImage(paddedImage, origHeight, origWidth, paddedWidth, refs, numTilesHeight, numTilesWidth, options.getTileDim());
                 const std::string outputFile = getOutputFileName(inputFile, options.getSuffix());
                 ImageIO::saveImage(outputFile, std::move(outputImage), origHeight, origWidth, origWidth, format);
 
-                size_t numRefTiles = 0;
-                float maxError = 0;
-                float avgError = 0;
-                for (size_t i = 0; i < refs.size(); ++i)
-                {
-                    if (refs[i] != i)
-                    {
-                        ++numRefTiles;
-                        maxError = std::max(maxError, errors[i]);
-                        avgError += errors[i];
-                    }
-                }
-                const float percentage = static_cast<float>(numRefTiles) / refs.size() * 100.;
-                avgError = numRefTiles == 0 ? 0 : avgError / numRefTiles;
-
-                std::cout << "\ntotal number of tiles: " << refs.size() << "\n";
-                std::cout << "number of reference tiles: " << numRefTiles << " (" << percentage << "%)\n";
-                std::cout << "max error: " << maxError << "\n";
-                std::cout << "average error (only considering reference tiles): " << avgError << "\n";
-                std::cout << std::endl;
+                printStats(refs, errors);
             }
             catch (const std::exception& exn)
             {
