@@ -11,6 +11,7 @@ namespace GpuSimilarityFinder
     void setOptions(const SimilarityFinderOptions &options);
 }
 
+// Encapsulates the options for the similarity finder.
 class SimilarityFinderOptions
 {
 public:
@@ -46,15 +47,16 @@ public:
     float getScalarRed() const;
 
 private:
+    // Some feasible default options.
     std::string suffix_ = "_decompressed";
     unsigned int tileDim_ = 5;
     unsigned int blockDim_ = 3;
     unsigned int windowDim_ = 10;
     float epsilonLow_ = 0;
-    float epsilonHigh_ = 1000;
+    float epsilonHigh_ = 50.;
     float scalarBlue_ = 0.299f;
     float scalarGreen_ = 0.587f;
     float scalarRed_ = 0.114f;
 
-    friend void GpuSimilarityFinder::setOptions(const SimilarityFinderOptions &options);
+    friend void GpuSimilarityFinder::setOptions(const SimilarityFinderOptions& options);
 };

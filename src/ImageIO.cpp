@@ -5,8 +5,8 @@
 namespace ImageIO
 {
     std::tuple<FREE_IMAGE_FORMAT, std::vector<uint8_t>, unsigned int, unsigned int, unsigned int, unsigned int> loadPaddedImage(
-        const std::string &inputFile,
-        const std::function<unsigned int(unsigned int)> &paddingFct)
+        const std::string& inputFile,
+        const std::function<unsigned int(unsigned int)>& paddingFct)
     {
         FREE_IMAGE_FORMAT format = FreeImage_GetFileType(inputFile.c_str());
         if (format == FIF_UNKNOWN)
@@ -23,13 +23,13 @@ namespace ImageIO
             throw std::runtime_error("unsupported free image format " + std::to_string(format) + " for file " + inputFile);
         }
 
-        FIBITMAP *const origBitmap = FreeImage_Load(format, inputFile.c_str());
+        FIBITMAP* const origBitmap = FreeImage_Load(format, inputFile.c_str());
         if (!origBitmap)
         {
             throw std::runtime_error("error loading (free) image for file " + inputFile);
         }
 
-        FIBITMAP *const convBitmap = FreeImage_ConvertTo24Bits(origBitmap);
+        FIBITMAP* const convBitmap = FreeImage_ConvertTo24Bits(origBitmap);
         if (!convBitmap)
         {
             throw std::runtime_error("error converting (free) image for file " + inputFile);
@@ -54,13 +54,14 @@ namespace ImageIO
         const unsigned int paddedHeight = paddingFct(origHeight);
         const unsigned int paddedWidth = paddingFct(origWidth);
 
-        // Copy the FreeImage data into the ImageCPU object.
-        const unsigned int srcPitch = FreeImage_GetPitch(convBitmap);
-        const uint8_t *srcLine = FreeImage_GetBits(convBitmap) + srcPitch * (origHeight - 1);
-
         std::vector<uint8_t> image(paddedHeight * paddedWidth * 3, 0);
-        uint8_t *dstLine = image.data();
+
+        // We cannot use FreeImage_ConvertToRawBits here since it doesn't support the change in pitch.
+        const unsigned int srcPitch = FreeImage_GetPitch(convBitmap);
+        const uint8_t* srcLine = FreeImage_GetBits(convBitmap) + srcPitch * (origHeight - 1);
+        uint8_t* dstLine = image.data();
         const unsigned int dstPitch = paddedWidth * 3 * sizeof(uint8_t);
+
         for (size_t line = 0; line < origHeight; ++line)
         {
             memcpy(dstLine, srcLine, origWidth * 3 * sizeof(uint8_t));
@@ -75,34 +76,21 @@ namespace ImageIO
     }
 
     void saveImage(
-        const std::string &outputFile,
-        const std::vector<uint8_t> &outputImage,
+        const std::string& outputFile,
+        std::vector<uint8_t>&& outputImage,
         const unsigned int height,
         const unsigned int width,
         const unsigned int paddedWidth,
         const FREE_IMAGE_FORMAT format)
     {
-        FIBITMAP *const resultBitmap = FreeImage_Allocate(width, height, 24);
-        if (!resultBitmap)
-        {
-            throw std::runtime_error("error allocating bitmap memory for file " + outputFile);
-        }
-
-        const unsigned int srcPitch = paddedWidth * 3 * sizeof(uint8_t);
-        const uint8_t *srcLine = outputImage.data();
-        const unsigned int dstPitch = FreeImage_GetPitch(resultBitmap);
-        uint8_t *dstLine = FreeImage_GetBits(resultBitmap) + dstPitch * (height - 1);
-        for (size_t line = 0; line < height; ++line)
-        {
-            memcpy(dstLine, srcLine, width * 3 * sizeof(uint8_t));
-            srcLine += srcPitch;
-            dstLine -= dstPitch;
-        }
+        FIBITMAP* const resultBitmap = FreeImage_ConvertFromRawBits(outputImage.data(), width, height, 3 * paddedWidth, 24, 0x00FF0000, 0x0000FF00, 0x000000FF, TRUE);
 
         const bool success = FreeImage_Save(format, resultBitmap, outputFile.c_str(), 0) == TRUE;
         if (!success)
         {
             throw std::runtime_error("error saving image for file " + outputFile);
         }
+
+        FreeImage_Unload(resultBitmap);
     }
 }

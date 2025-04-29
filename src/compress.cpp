@@ -92,11 +92,11 @@ int main(int argc, char *argv[])
                 const auto [refs, errors, numTilesHeight, numTilesWidth] =
                     finder.findSimilarities(origHeight, origWidth, paddedImage.data(), paddedHeight, paddedWidth);
 
-                const std::vector<uint8_t> outputImage =
+                std::vector<uint8_t> outputImage =
                     createOutputImage(paddedImage, origHeight, origWidth, paddedWidth, refs, numTilesHeight, numTilesWidth, tileDim);
 
                 const std::string outputFile = getOutputFileName(inputFile, options.getSuffix());
-                ImageIO::saveImage(outputFile, outputImage, origHeight, origWidth, origWidth, format);
+                ImageIO::saveImage(outputFile, std::move(outputImage), origHeight, origWidth, origWidth, format);
 
                 size_t numRefTiles = 0;
                 float maxError = 0;
