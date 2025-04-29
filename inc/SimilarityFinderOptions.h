@@ -25,6 +25,7 @@ public:
 
     static std::pair<std::vector<std::string>, SimilarityFinderOptions> parseFromArgLine(int argc, char *argv[]);
 
+    SimilarityFinderOptions& setSuffix(const std::string& suffix);
     SimilarityFinderOptions& setTileDim(unsigned int tileDim);
     SimilarityFinderOptions& setBlockDim(unsigned int blockDim);
     SimilarityFinderOptions& setWindowDim(unsigned int windowDim);
@@ -34,6 +35,7 @@ public:
     SimilarityFinderOptions& setScalarGreen(float scalarGreen);
     SimilarityFinderOptions& setScalarRed(float scalarRed);
 
+    const std::string& getSuffix() const;
     unsigned int getTileDim() const;
     unsigned int getBlockDim() const;
     unsigned int getWindowDim() const;
@@ -44,11 +46,12 @@ public:
     float getScalarRed() const;
 
 private:
+    std::string suffix_ = "_decompressed";
     unsigned int tileDim_ = 5;
     unsigned int blockDim_ = 3;
     unsigned int windowDim_ = 10;
-    float epsilonLow_ = 0.f;
-    float epsilonHigh_ = 0.1f;
+    float epsilonLow_ = 0;
+    float epsilonHigh_ = 1000;
     float scalarBlue_ = 0.299f;
     float scalarGreen_ = 0.587f;
     float scalarRed_ = 0.114f;

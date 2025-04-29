@@ -29,7 +29,12 @@ void SimilarityFinder::setOptions(const SimilarityFinderOptions &options)
     if (options.getEpsilonHigh() < options.getEpsilonLow())
     {
         throw std::runtime_error("SimilarityFinder::setOptions: the lower epsilon (" + std::to_string(options.getEpsilonLow()) +
-                                 ") must not be greater than the higher epsilon (" + std::to_string(options.getEpsilonHigh()) + ")");
+            ") must not be greater than the higher epsilon (" + std::to_string(options.getEpsilonHigh()) + ")");
+    }
+
+    if (std::abs(options.getScalarBlue() + options.getScalarGreen() + options.getScalarRed() - 1.) > 1e-6)
+    {
+        throw std::runtime_error("SimilarityFinder::setOptions: the colour channel scalars must add up to 1");
     }
 
     options_ = options;

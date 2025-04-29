@@ -5,7 +5,6 @@
 
 namespace
 {
-    
     std::vector<uint8_t> createOutputImage(
         const std::vector<uint8_t>& paddedImage,
         const unsigned int origHeight,
@@ -58,14 +57,12 @@ namespace
         return resImage;
     }
 
-    // TODO: Could be made more flexible.
-    std::string getOutputFileName(const std::string &inputFile)
+    std::string getOutputFileName(const std::string &inputFile, const std::string& preExtSuffix)
     {
-        const std::string preExtSuffix = "_compressed";
         const std::string::size_type dotLoc = inputFile.rfind('.');
         return dotLoc == std::string::npos ? inputFile + preExtSuffix : inputFile.substr(0, dotLoc) + preExtSuffix + inputFile.substr(dotLoc);
     }
-}
+} // anonymous namespace
 
 int main(int argc, char *argv[])
 {
@@ -79,11 +76,11 @@ int main(int argc, char *argv[])
             return 0;
         }
 
-        SimilarityFinder &finder = SimilarityFinder::getInstance();
+        SimilarityFinder& finder = SimilarityFinder::getInstance();
         finder.setOptions(options);
         const unsigned int tileDim = options.getTileDim();
 
-        for (const std::string &inputFile : inputFiles)
+        for (const std::string& inputFile : inputFiles)
         {
             try
             {
@@ -98,7 +95,7 @@ int main(int argc, char *argv[])
                 const std::vector<uint8_t> outputImage =
                     createOutputImage(paddedImage, origHeight, origWidth, paddedWidth, refs, numTilesHeight, numTilesWidth, tileDim);
 
-                const std::string outputFile = getOutputFileName(inputFile);
+                const std::string outputFile = getOutputFileName(inputFile, options.getSuffix());
                 ImageIO::saveImage(outputFile, outputImage, origHeight, origWidth, origWidth, format);
 
                 size_t numRefTiles = 0;
@@ -122,7 +119,7 @@ int main(int argc, char *argv[])
                 std::cout << "average error (only considering reference tiles): " << avgError << "\n";
                 std::cout << std::endl;
             }
-            catch (const std::exception &exn)
+            catch (const std::exception& exn)
             {
                 std::cerr << "\nProgram error! The following exception occurred for input file " << inputFile << ": \n";
                 std::cerr << exn.what() << std::endl;
@@ -133,7 +130,7 @@ int main(int argc, char *argv[])
             }
         }
     }
-    catch (const std::exception &exn)
+    catch (const std::exception& exn)
     {
         std::cerr << "\nProgram error! The following exception occurred:\n";
         std::cerr << exn.what() << std::endl;
